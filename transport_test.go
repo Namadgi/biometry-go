@@ -130,6 +130,67 @@ func TestDoMultipart_Success(t *testing.T) {
 	}
 }
 
+func TestResponseHeaders(t *testing.T) {
+	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-abc-123")
+		w.Header().Set("X-Auto-Enroll", "true")
+		w.Header().Set("X-Removed-Services", "true")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"data":    map[string]string{"id": "1"},
+			"message": "ok",
+		})
+	})
+
+	resp, err := client.doMultipartRaw(
+		context.Background(),
+		"/test",
+		nil,
+		[]FileUpload{{FieldName: "f", FileName: "f.bin", Content: strings.NewReader("data")}},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.RequestID() != "req-abc-123" {
+		t.Errorf("expected request ID req-abc-123, got %s", resp.RequestID())
+	}
+	if !resp.AutoEnrolled() {
+		t.Error("expected AutoEnrolled() to be true")
+	}
+	if !resp.RemovedServices() {
+		t.Error("expected RemovedServices() to be true")
+	}
+}
+
+func TestRequestHeaders_DocAuth(t *testing.T) {
+	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Inhouse-Docauth") != "false" {
+			t.Errorf("expected X-Inhouse-Docauth=false, got %s", r.Header.Get("X-Inhouse-Docauth"))
+		}
+		if r.Header.Get("X-Inhouse-MRZ") != "true" {
+			t.Errorf("expected X-Inhouse-MRZ=true, got %s", r.Header.Get("X-Inhouse-MRZ"))
+		}
+		if r.Header.Get("X-Device-Info") != `{"model":"iPhone"}` {
+			t.Errorf("unexpected X-Device-Info: %s", r.Header.Get("X-Device-Info"))
+		}
+		if r.Header.Get("X-Request-Tags") != "vip,test" {
+			t.Errorf("unexpected X-Request-Tags: %s", r.Header.Get("X-Request-Tags"))
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{"data": "ok"})
+	})
+
+	err := client.doJSON(context.Background(), http.MethodPost, "/test", nil, nil,
+		WithInhouseDocAuth(false),
+		WithMRZValidation(true),
+		WithDeviceInfo(`{"model":"iPhone"}`),
+		WithRequestTags("vip,test"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestDoMultipartRaw_ReturnsEnvelope(t *testing.T) {
 	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -130,6 +130,7 @@ func (c *Client) doRaw(req *http.Request) (*Response, error) {
 	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
+	r.Header = resp.Header
 	return &r, nil
 }
 
