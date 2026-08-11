@@ -3,7 +3,6 @@ package biometry
 import (
 	"context"
 	"io"
-	"strings"
 )
 
 // EnrollmentService handles face and voice enrollment.
@@ -11,6 +10,7 @@ type EnrollmentService struct{ c *Client }
 
 // EnrollFaceInput is the input for face enrollment.
 type EnrollFaceInput struct {
+	UserID     string // opaque, customer-provided identity key
 	Face       io.Reader
 	FileName   string
 	IsDocument bool // set true if the face image is from a document
@@ -18,46 +18,37 @@ type EnrollFaceInput struct {
 
 // Face enrolls a face image for recognition.
 func (e *EnrollmentService) Face(ctx context.Context, input EnrollFaceInput, opts ...CallOption) (*Response, error) {
-	fields := map[string]string{}
-	if input.IsDocument {
-		fields["is_document"] = "true"
+	fields, err := requestField(v2Request{UserID: input.UserID, IsDocument: input.IsDocument})
+	if err != nil {
+		return nil, err
 	}
 	files := []FileUpload{{
 		FieldName: "face",
 		FileName:  input.FileName,
 		Content:   input.Face,
 	}}
-	return e.c.doMultipartRaw(ctx, pathGateway+"/enroll/face", fields, files, opts...)
-}
-
-// VoiceFile represents a single voice recording for enrollment.
-type VoiceFile struct {
-	FileName string
-	Content  io.Reader
+	return e.c.doMultipartRaw(ctx, pathGatewayV2+"/enrollments/face", fields, files, opts...)
 }
 
 // EnrollVoiceInput is the input for voice enrollment.
 type EnrollVoiceInput struct {
-	Files      []VoiceFile
-	Phrases    []string // one phrase per voice file
-	Vocabulary string   // optional
+	UserID     string // opaque, customer-provided identity key
+	Voice      io.Reader
+	FileName   string
+	Phrase     string // the phrase spoken in the recording
+	Vocabulary string // optional
 }
 
-// Voice enrolls voice recordings for recognition.
+// Voice enrolls a voice recording for recognition.
 func (e *EnrollmentService) Voice(ctx context.Context, input EnrollVoiceInput, opts ...CallOption) (*Response, error) {
-	fields := map[string]string{
-		"phrase": strings.Join(input.Phrases, ","),
+	fields, err := requestField(v2Request{UserID: input.UserID, Phrase: input.Phrase, Vocabulary: input.Vocabulary})
+	if err != nil {
+		return nil, err
 	}
-	if input.Vocabulary != "" {
-		fields["vocabulary"] = input.Vocabulary
-	}
-	files := make([]FileUpload, len(input.Files))
-	for i, f := range input.Files {
-		files[i] = FileUpload{
-			FieldName: "voice",
-			FileName:  f.FileName,
-			Content:   f.Content,
-		}
-	}
-	return e.c.doMultipartRaw(ctx, pathGateway+"/enroll/voice", fields, files, opts...)
+	files := []FileUpload{{
+		FieldName: "voice",
+		FileName:  input.FileName,
+		Content:   input.Voice,
+	}}
+	return e.c.doMultipartRaw(ctx, pathGatewayV2+"/enrollments/voice", fields, files, opts...)
 }

@@ -24,9 +24,6 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("User-Agent", c.userAgent)
-	if c.userFullname != "" {
-		req.Header.Set("X-User-Fullname", c.userFullname)
-	}
 	return req, nil
 }
 
@@ -134,7 +131,30 @@ func (c *Client) doRaw(req *http.Request) (*Response, error) {
 	return &r, nil
 }
 
+// doBytes executes a request and returns the raw response body (for endpoints
+// that return non-JSON payloads such as an image's octet-stream).
+func (c *Client) doBytes(req *http.Request) ([]byte, http.Header, error) {
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading response body: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, nil, parseAPIError(resp.StatusCode, body)
+	}
+	return body, resp.Header, nil
+}
+
 func (c *Client) buildMultipartRequest(ctx context.Context, path string, fields map[string]string, files []FileUpload) (*http.Request, error) {
+	return c.buildMultipartRequestMethod(ctx, http.MethodPost, path, fields, files)
+}
+
+func (c *Client) buildMultipartRequestMethod(ctx context.Context, method, path string, fields map[string]string, files []FileUpload) (*http.Request, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -158,7 +178,7 @@ func (c *Client) buildMultipartRequest(ctx context.Context, path string, fields 
 		return nil, fmt.Errorf("closing multipart writer: %w", err)
 	}
 
-	req, err := c.newRequest(ctx, http.MethodPost, path, &buf)
+	req, err := c.newRequest(ctx, method, path, &buf)
 	if err != nil {
 		return nil, err
 	}
