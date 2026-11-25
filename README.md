@@ -62,8 +62,16 @@ func main() {
     client := biometry.NewClient("your-api-key")
     userID := "user-123"
 
-    // 1. Enroll the face. Enrollment needs the user's authorization and
-    //    storage consent (see Consent below).
+    // 1. Record the user's consent (collected in your app). Enrollment
+    //    needs both authorization and storage consent.
+    if _, err := client.Consents.Give(ctx, userID, biometry.ConsentChange{
+        Authorization: true,
+        Storage:       true,
+    }); err != nil {
+        log.Fatal(err)
+    }
+
+    // 2. Enroll the face
     face, _ := os.Open("face.jpg")
     defer face.Close()
     if _, err := client.Enrollment.Face(ctx, biometry.EnrollFaceInput{
@@ -74,13 +82,13 @@ func main() {
         log.Fatal(err)
     }
 
-    // 2. Start a session
+    // 3. Start a session
     sessionID, err := client.Sessions.Start(ctx)
     if err != nil {
         log.Fatal(err)
     }
 
-    // 3. Check the identity document
+    // 4. Check the identity document
     doc, _ := os.Open("passport.jpg")
     defer doc.Close()
     if _, err := client.DocAuth.Check(ctx, biometry.DocAuthInput{
@@ -91,7 +99,7 @@ func main() {
         log.Fatal(err)
     }
 
-    // 4. Liveness on a video of the user reading the challenge phrase
+    // 5. Liveness on a video of the user reading the challenge phrase
     video, _ := os.Open("selfie.mp4")
     defer video.Close()
     if _, err := client.Verification.Liveness(ctx, biometry.LivenessInput{
@@ -104,7 +112,7 @@ func main() {
         log.Fatal(err)
     }
 
-    // 5. Face verification on the same video
+    // 6. Face verification on the same video
     if _, err := client.Verification.FaceVerify(ctx, biometry.VerifyInput{
         UserID:          userID,
         SessionID:       sessionID,
@@ -113,7 +121,7 @@ func main() {
         log.Fatal(err)
     }
 
-    // 6. Face match: document photo against the session video
+    // 7. Face match: document photo against the session video
     passport, _ := os.Open("passport.jpg")
     defer passport.Close()
     match, err := client.FaceMatch.Match(ctx, biometry.FaceMatchInput{
@@ -130,7 +138,7 @@ func main() {
         fmt.Println("Face match decision:", match.Decision.Status)
     }
 
-    // 7. End the session
+    // 8. End the session
     if err := client.Sessions.End(ctx, sessionID, &biometry.EndSessionRequest{}); err != nil {
         log.Fatal(err)
     }
@@ -141,7 +149,25 @@ In a session, face verification and face match must use the liveness media: the 
 
 ## Consent
 
-Face and voice enrollment and `Images.Upload` need the user's **authorization** and **storage** consent, recorded with `PUT /api-gateway/v2/users/{user_id}/consents`.
+Face and voice enrollment need the user's **authorization** and **storage** consent; `Images.Upload` needs authorization consent. Collect the user's agreement in your app, then record it:
+
+```go
+// Give both (enrollment needs both)
+state, err := client.Consents.Give(ctx, userID, biometry.ConsentChange{
+    Authorization: true,
+    Storage:       true,
+    SessionID:     sessionID, // optional: shows the consent with this session in the Console
+})
+
+// Withdraw storage consent only; authorization is left unchanged
+state, err = client.Consents.Revoke(ctx, userID, biometry.ConsentChange{Storage: true})
+
+// Read the current state (both false if the user never gave consent)
+state, err = client.Consents.Status(ctx, userID)
+fmt.Println(state.Authorization, state.Storage)
+```
+
+`Give` and `Revoke` return the state after the change, are safe to repeat, and return `ErrNoConsentSelected` without sending a request if neither consent is selected.
 
 `Consents.Approve` and `Consents.MyApprovals` manage your project's custom consent templates. They do **not** unlock enrollment.
 
@@ -156,7 +182,8 @@ Face and voice enrollment and `Images.Upload` need the user's **authorization** 
 | `DocAuth` | `Check` | `/v2/documents/check` |
 | `Deepfake` | `Submit`, `Status` | `/v2/deepfake/checks` |
 | `Images` | `Upload`, `Get` | `/v2/users/{user_id}/reference-image` |
-| `Consents` | `Approve`, `MyApprovals` | `/v2/consents` (custom templates) |
+| `Consents` | `Give`, `Revoke`, `Status` | `/v2/users/{user_id}/consents` |
+| | `Approve`, `MyApprovals` | `/v2/consents` (custom templates) |
 | `Transactions` | `List`, `Count`, `GetBySession`, `GetSamples`, `UpdateTags`, `Flag` | `/api-transactions` (not part of v2) |
 | `APIKeys` | `Mint`, `Revoke`, `Info` | `/api-projects` (not part of v2) |
 
