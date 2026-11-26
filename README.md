@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Namadgi/biometry-go)](go.mod)
 
-Official Go SDK for the [Biometry](https://biometrysolutions.com) identity verification platform.
+Official Go SDK for the [Biometry](https://biometrysolutions.com) identity verification platform. It calls the Biometry API v2 (`/api-gateway/v2`).
 
 ## Installation
 
@@ -13,7 +13,7 @@ Official Go SDK for the [Biometry](https://biometrysolutions.com) identity verif
 go get github.com/Namadgi/biometry-go
 ```
 
-Requires **Go 1.21** or later.
+Requires the Go version in [go.mod](go.mod).
 
 ## Quick Start
 
@@ -29,9 +29,7 @@ import (
 )
 
 func main() {
-    client := biometry.NewClient("your-api-key",
-        biometry.WithUserFullname("John Doe"),
-    )
+    client := biometry.NewClient("your-api-key")
 
     sessionID, err := client.Sessions.Start(context.Background())
     if err != nil {
@@ -41,10 +39,11 @@ func main() {
 }
 ```
 
+Every biometric call takes a `UserID`: your own opaque, stable key for the end user (not their name or email).
+
 ## Full Verification Flow
 
-A typical identity verification combines session management, consent, document
-authentication, face enrollment, video processing, and face matching:
+Enroll the user's face, then verify them in a session: liveness on a video, face verification on the same video, and a face match against their document.
 
 ```go
 package main
@@ -60,110 +59,115 @@ import (
 
 func main() {
     ctx := context.Background()
+    client := biometry.NewClient("your-api-key")
+    userID := "user-123"
 
-    client := biometry.NewClient("your-api-key",
-        biometry.WithUserFullname("Jane Smith"),
-    )
+    // 1. Enroll the face. Enrollment needs the user's authorization and
+    //    storage consent (see Consent below).
+    face, _ := os.Open("face.jpg")
+    defer face.Close()
+    if _, err := client.Enrollment.Face(ctx, biometry.EnrollFaceInput{
+        UserID:   userID,
+        Face:     face,
+        FileName: "face.jpg",
+    }); err != nil {
+        log.Fatal(err)
+    }
 
-    // 1. Start session
+    // 2. Start a session
     sessionID, err := client.Sessions.Start(ctx)
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Println("Session:", sessionID)
 
-    // 2. Record consent
-    err = client.Consents.Approve(ctx, "consent-id", "user-id",
-        biometry.WithSessionID(sessionID),
-    )
-    if err != nil {
+    // 3. Check the identity document
+    doc, _ := os.Open("passport.jpg")
+    defer doc.Close()
+    if _, err := client.DocAuth.Check(ctx, biometry.DocAuthInput{
+        Document:  doc,
+        FileName:  "passport.jpg",
+        SessionID: sessionID,
+    }); err != nil {
         log.Fatal(err)
     }
 
-    // 3. Authenticate document
-    docFile, _ := os.Open("passport.jpg")
-    defer docFile.Close()
-
-    docResp, err := client.DocAuth.Check(ctx, docFile, "passport.jpg",
-        biometry.WithSessionID(sessionID),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("DocAuth score: %.2f\n", docResp.Score)
-
-    // 4. Enroll face from document
-    docFace, _ := os.Open("passport.jpg")
-    defer docFace.Close()
-
-    _, err = client.Enrollment.Face(ctx, biometry.EnrollFaceInput{
-        Face:       docFace,
-        FileName:   "passport.jpg",
-        IsDocument: true,
-    }, biometry.WithSessionID(sessionID))
-    if err != nil {
+    // 4. Liveness on a video of the user reading the challenge phrase
+    video, _ := os.Open("selfie.mp4")
+    defer video.Close()
+    if _, err := client.Verification.Liveness(ctx, biometry.LivenessInput{
+        UserID:    userID,
+        Video:     video,
+        FileName:  "selfie.mp4",
+        Phrase:    "one two three four five six seven",
+        SessionID: sessionID,
+    }); err != nil {
         log.Fatal(err)
     }
 
-    // 5. Process video (voice + liveness)
-    videoFile, _ := os.Open("selfie.mp4")
-    defer videoFile.Close()
+    // 5. Face verification on the same video
+    if _, err := client.Verification.FaceVerify(ctx, biometry.VerifyInput{
+        UserID:          userID,
+        SessionID:       sessionID,
+        UseSessionVideo: true,
+    }); err != nil {
+        log.Fatal(err)
+    }
 
-    videoResp, err := client.Video.Process(ctx, biometry.ProcessVideoInput{
-        Video:     videoFile,
-        VideoName: "selfie.mp4",
-        Phrase:    "one two three four",
-    }, biometry.WithSessionID(sessionID))
+    // 6. Face match: document photo against the session video
+    passport, _ := os.Open("passport.jpg")
+    defer passport.Close()
+    match, err := client.FaceMatch.Match(ctx, biometry.FaceMatchInput{
+        UserID:          userID,
+        ReferenceImage:  passport,
+        ReferenceName:   "passport.jpg",
+        SessionID:       sessionID,
+        UseSessionVideo: true,
+    })
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Printf("Video score: %.2f\n", videoResp.Score)
+    if match.Decision != nil {
+        fmt.Println("Face match decision:", match.Decision.Status)
+    }
 
-    // 6. Match face (document image vs session video)
-    matchFace, _ := os.Open("passport.jpg")
-    defer matchFace.Close()
-
-    matchResp, err := client.FaceMatch.MatchWithSessionVideo(ctx,
-        matchFace, "passport.jpg", sessionID,
-    )
-    if err != nil {
+    // 7. End the session
+    if err := client.Sessions.End(ctx, sessionID, &biometry.EndSessionRequest{}); err != nil {
         log.Fatal(err)
     }
-    fmt.Printf("Face match score: %.2f\n", matchResp.Score)
-
-    // 7. End session
-    err = client.Sessions.End(ctx, sessionID, &biometry.EndSessionRequest{})
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("Session ended")
 }
 ```
 
+In a session, face verification and face match must use the liveness media: the same file, or `UseSessionVideo`.
+
+## Consent
+
+Face and voice enrollment and `Images.Upload` need the user's **authorization** and **storage** consent, recorded with `PUT /api-gateway/v2/users/{user_id}/consents`.
+
+`Consents.Approve` and `Consents.MyApprovals` manage your project's custom consent templates. They do **not** unlock enrollment.
+
 ## Services
 
-| Service | Methods | Description |
-|---------|---------|-------------|
-| `Sessions` | `Start`, `End` | Session lifecycle management |
-| `Video` | `Process` | Video processing with liveness and voice verification |
-| `Enrollment` | `Face`, `Voice` | Face and voice biometric enrollment |
-| `FaceMatch` | `Match`, `MatchWithSessionVideo` | Face comparison between images and videos |
-| `DocAuth` | `Check` | Document authenticity verification |
-| `Consents` | `Approve`, `MyApprovals` | Custom consent management |
-| `Images` | `Upload`, `Get` | Face image storage and retrieval |
-| `AVF` | `StartInference`, `CheckStatus` | Anti-video-forgery detection |
-| `Transactions` | `List`, `Count`, `GetBySession`, `GetSamples`, `UpdateTags`, `Flag` | Transaction queries and management |
-| `APIKeys` | `Mint`, `Revoke`, `Info` | API key lifecycle |
+| Service | Methods | API v2 |
+|---------|---------|--------|
+| `Sessions` | `Start`, `End` | `/v2/sessions` |
+| `Verification` | `Liveness`, `FaceVerify`, `VoiceVerify` | `/v2/liveness`, `/v2/face-verify`, `/v2/voice-verify` |
+| `Enrollment` | `Face`, `Voice` | `/v2/enrollments/face`, `/v2/enrollments/voice` |
+| `FaceMatch` | `Match` | `/v2/face-match` |
+| `DocAuth` | `Check` | `/v2/documents/check` |
+| `Deepfake` | `Submit`, `Status` | `/v2/deepfake/checks` |
+| `Images` | `Upload`, `Get` | `/v2/users/{user_id}/reference-image` |
+| `Consents` | `Approve`, `MyApprovals` | `/v2/consents` (custom templates) |
+| `Transactions` | `List`, `Count`, `GetBySession`, `GetSamples`, `UpdateTags`, `Flag` | `/api-transactions` (not part of v2) |
+| `APIKeys` | `Mint`, `Revoke`, `Info` | `/api-projects` (not part of v2) |
+
+`LivenessInput.ExcludeServices` skips checks by name; use the `Service*` constants (`ServiceFaceLiveness`, `ServiceActiveSpeaker`, `ServiceVisualSpeech`, ...).
 
 ## Client Options
-
-Configure the client at initialization:
 
 ```go
 client := biometry.NewClient("key",
     biometry.WithBaseURL("https://custom.endpoint.com"),
     biometry.WithHTTPClient(&http.Client{Timeout: 60 * time.Second}),
-    biometry.WithUserFullname("Jane Doe"),
     biometry.WithUserAgent("my-app/1.0"),
 )
 ```
@@ -172,16 +176,14 @@ client := biometry.NewClient("key",
 |--------|-------------|
 | `WithBaseURL` | Override the default API base URL |
 | `WithHTTPClient` | Provide a custom `*http.Client` |
-| `WithUserFullname` | Set the default `X-User-Fullname` header |
 | `WithUserAgent` | Override the default `User-Agent` header |
 
 ## Per-Request Options
 
-Any method accepts variadic `CallOption` values to set headers on individual requests:
+Any method accepts `CallOption` values that add request metadata headers:
 
 ```go
-resp, err := client.Video.Process(ctx, input,
-    biometry.WithSessionID(sessionID),
+resp, err := client.Verification.Liveness(ctx, input,
     biometry.WithDeviceInfo(`{"model":"iPhone 15","os":"iOS 18"}`),
     biometry.WithGeoLocation(`{"lat":-35.28,"lng":149.13,"country":"AU"}`),
 )
@@ -189,47 +191,44 @@ resp, err := client.Video.Process(ctx, input,
 
 | CallOption | Header | Description |
 |------------|--------|-------------|
-| `WithFullname` | `X-User-Fullname` | Override fullname for one request |
-| `WithSessionID` | `X-Session-ID` | Attach request to a session |
-| `WithActionTrigger` | `X-Action-Trigger` | Set the action trigger label |
 | `WithDeviceInfo` | `X-Device-Info` | JSON device metadata |
 | `WithGeoLocation` | `X-Geo-Location` | JSON lat/lng/country/city |
 | `WithRequestTags` | `X-Request-Tags` | Comma-separated request labels |
 | `WithClientApp` | `X-Client-App` | Calling application identifier |
 | `WithClientVersion` | `X-Client-Version` | Calling application version |
-| `WithInhouseDocAuth` | `X-Inhouse-Docauth` | Toggle in-house vs IDScan docauth |
-| `WithMRZValidation` | `X-Inhouse-MRZ` | Enable MRZ validation for documents |
 
-## Response Headers
+User, session and trigger are fields on the input structs, not headers.
 
-Endpoints that return `*Response` expose useful metadata from HTTP response headers:
+## Responses
+
+Endpoints that return `*Response` carry the API v2 envelope `{ data, decision, meta }`:
 
 ```go
-resp, err := client.Video.Process(ctx, input)
+resp, err := client.Verification.Liveness(ctx, input)
 
-resp.RequestID()       // X-Request-Id  -- unique request trace ID
-resp.AutoEnrolled()    // X-Auto-Enroll -- true if auto-enrollment occurred
-resp.RemovedServices() // X-Removed-Services -- true if services were dropped (missing consent)
+resp.Decision      // *Decision{Status, Score, Reasons}; nil when no scoring system applies
+resp.Decode(&out)  // decode the endpoint-specific data
+resp.RequestID()   // request trace ID
 ```
 
 ## Error Handling
 
-All API errors are returned as `*biometry.APIError` with the HTTP status code and
-message from the server:
+API errors are returned as `*biometry.APIError`, with the HTTP status, the v2 error code and the message:
 
 ```go
-resp, err := client.Video.Process(ctx, input)
+resp, err := client.Verification.Liveness(ctx, input)
 if err != nil {
     var apiErr *biometry.APIError
     if errors.As(err, &apiErr) {
         fmt.Println("Status:", apiErr.StatusCode)
+        fmt.Println("Code:", apiErr.Code) // e.g. "face_not_detected"
         fmt.Println("Message:", apiErr.Message)
     }
     log.Fatal(err)
 }
 ```
 
-Convenience helpers for common status codes:
+Helpers for common status codes:
 
 ```go
 if biometry.IsUnauthorized(err) { /* 401 -- bad or expired API key */ }
@@ -239,8 +238,7 @@ if biometry.IsNotFound(err)     { /* 404 -- resource not found */ }
 
 ## Documentation
 
-Full API reference and integration guides are available at
-**[docs.biometrysolutions.com/sdks/go](https://docs.biometrysolutions.com/sdks/go/)**.
+Full API reference and integration guides: **[docs.biometrysolutions.com/sdks/go](https://docs.biometrysolutions.com/sdks/go/)**.
 
 ## License
 

@@ -14,10 +14,7 @@ func testServer(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Serv
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	client := NewClient("test-api-key",
-		WithBaseURL(srv.URL),
-		WithUserFullname("Test User"),
-	)
+	client := NewClient("test-api-key", WithBaseURL(srv.URL))
 	return client, srv
 }
 
@@ -26,16 +23,13 @@ func TestDoJSON_Success(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer test-api-key" {
 			t.Errorf("unexpected auth header: %s", r.Header.Get("Authorization"))
 		}
-		if r.Header.Get("X-User-Fullname") != "Test User" {
-			t.Errorf("unexpected fullname header: %s", r.Header.Get("X-User-Fullname"))
-		}
 		if r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("unexpected content type: %s", r.Header.Get("Content-Type"))
 		}
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
-			"data":    map[string]string{"id": "123"},
-			"message": "ok",
+			"data": map[string]string{"id": "123"},
+			"meta": map[string]string{"message": "ok"},
 		})
 	})
 
@@ -51,22 +45,60 @@ func TestDoJSON_Success(t *testing.T) {
 	}
 }
 
-func TestDoJSON_APIError(t *testing.T) {
+func TestDoJSON_APIError_V2Envelope(t *testing.T) {
 	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"message": "bad input"})
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"code": "face_not_detected", "message": "no face detected"},
+			"meta":  map[string]any{"request_id": "r9"},
+		})
 	})
 
 	err := client.doJSON(context.Background(), http.MethodPost, "/test", nil, nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
 	apiErr, ok := err.(*APIError)
 	if !ok {
 		t.Fatalf("expected *APIError, got %T", err)
 	}
-	if apiErr.StatusCode != 400 {
-		t.Errorf("expected status 400, got %d", apiErr.StatusCode)
+	if apiErr.StatusCode != 422 {
+		t.Errorf("expected status 422, got %d", apiErr.StatusCode)
+	}
+	if apiErr.Code != "face_not_detected" {
+		t.Errorf("expected code face_not_detected, got %q", apiErr.Code)
+	}
+	if apiErr.Message != "no face detected" {
+		t.Errorf("expected 'no face detected', got %q", apiErr.Message)
+	}
+}
+
+func TestDoJSON_APIError_ArrayMessage(t *testing.T) {
+	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"code":"invalid_request","message":[{"field":"user_id","message":"required"}]},"meta":{}}`))
+	})
+
+	err := client.doJSON(context.Background(), http.MethodPost, "/test", nil, nil)
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.Code != "invalid_request" {
+		t.Errorf("expected code invalid_request, got %q", apiErr.Code)
+	}
+	if !strings.Contains(apiErr.Message, "user_id") {
+		t.Errorf("expected field-error JSON in message, got %q", apiErr.Message)
+	}
+}
+
+func TestDoJSON_APIError_LegacyShape(t *testing.T) {
+	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "bad input"})
+	})
+
+	err := client.doJSON(context.Background(), http.MethodPost, "/test", nil, nil)
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
 	}
 	if apiErr.Message != "bad input" {
 		t.Errorf("expected 'bad input', got %q", apiErr.Message)
@@ -76,7 +108,7 @@ func TestDoJSON_APIError(t *testing.T) {
 func TestDoJSON_NilDst(t *testing.T) {
 	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"message":"ok"}`))
+		w.Write([]byte(`{"meta":{"message":"ok"}}`))
 	})
 
 	err := client.doJSON(context.Background(), http.MethodPost, "/test", nil, nil)
@@ -109,6 +141,7 @@ func TestDoMultipart_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]string{"result": "ok"},
+			"meta": map[string]string{},
 		})
 	})
 
@@ -130,15 +163,12 @@ func TestDoMultipart_Success(t *testing.T) {
 	}
 }
 
-func TestResponseHeaders(t *testing.T) {
+func TestResponseRequestID(t *testing.T) {
 	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Request-Id", "req-abc-123")
-		w.Header().Set("X-Auto-Enroll", "true")
-		w.Header().Set("X-Removed-Services", "true")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
-			"data":    map[string]string{"id": "1"},
-			"message": "ok",
+			"data": map[string]string{"id": "1"},
+			"meta": map[string]string{"request_id": "req-abc-123"},
 		})
 	})
 
@@ -154,37 +184,27 @@ func TestResponseHeaders(t *testing.T) {
 	if resp.RequestID() != "req-abc-123" {
 		t.Errorf("expected request ID req-abc-123, got %s", resp.RequestID())
 	}
-	if !resp.AutoEnrolled() {
-		t.Error("expected AutoEnrolled() to be true")
-	}
-	if !resp.RemovedServices() {
-		t.Error("expected RemovedServices() to be true")
-	}
 }
 
-func TestRequestHeaders_DocAuth(t *testing.T) {
+func TestRequestMetadataHeaders(t *testing.T) {
 	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Inhouse-Docauth") != "false" {
-			t.Errorf("expected X-Inhouse-Docauth=false, got %s", r.Header.Get("X-Inhouse-Docauth"))
-		}
-		if r.Header.Get("X-Inhouse-MRZ") != "true" {
-			t.Errorf("expected X-Inhouse-MRZ=true, got %s", r.Header.Get("X-Inhouse-MRZ"))
-		}
 		if r.Header.Get("X-Device-Info") != `{"model":"iPhone"}` {
 			t.Errorf("unexpected X-Device-Info: %s", r.Header.Get("X-Device-Info"))
 		}
 		if r.Header.Get("X-Request-Tags") != "vip,test" {
 			t.Errorf("unexpected X-Request-Tags: %s", r.Header.Get("X-Request-Tags"))
 		}
+		if r.Header.Get("X-Client-App") != "demo" {
+			t.Errorf("unexpected X-Client-App: %s", r.Header.Get("X-Client-App"))
+		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"data": "ok"})
+		json.NewEncoder(w).Encode(map[string]any{"data": "ok", "meta": map[string]string{}})
 	})
 
 	err := client.doJSON(context.Background(), http.MethodPost, "/test", nil, nil,
-		WithInhouseDocAuth(false),
-		WithMRZValidation(true),
 		WithDeviceInfo(`{"model":"iPhone"}`),
 		WithRequestTags("vip,test"),
+		WithClientApp("demo"),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -195,11 +215,9 @@ func TestDoMultipartRaw_ReturnsEnvelope(t *testing.T) {
 	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
-			"data":             map[string]string{"id": "abc"},
-			"scoring_result":   map[string]string{"status": "approved"},
-			"score":            92.5,
-			"decision_reasons": []string{"face_match"},
-			"message":          "done",
+			"data":     map[string]string{"id": "abc"},
+			"decision": map[string]any{"status": "pass", "score": 92.5, "reasons": []string{"face_match"}},
+			"meta":     map[string]string{"message": "done"},
 		})
 	})
 
@@ -212,35 +230,17 @@ func TestDoMultipartRaw_ReturnsEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Score != 92.5 {
-		t.Errorf("expected score=92.5, got %f", resp.Score)
+	if resp.Decision == nil || resp.Decision.Status != "pass" {
+		t.Fatalf("unexpected decision: %+v", resp.Decision)
 	}
-	if len(resp.DecisionReasons) != 1 || resp.DecisionReasons[0] != "face_match" {
-		t.Errorf("unexpected decision reasons: %v", resp.DecisionReasons)
+	if resp.Decision.Score == nil || *resp.Decision.Score != 92.5 {
+		t.Errorf("expected score=92.5, got %v", resp.Decision.Score)
 	}
-	if resp.Message != "done" {
-		t.Errorf("expected message=done, got %s", resp.Message)
+	if len(resp.Decision.Reasons) != 1 || resp.Decision.Reasons[0] != "face_match" {
+		t.Errorf("unexpected decision reasons: %v", resp.Decision.Reasons)
 	}
-}
-
-func TestCallOptions(t *testing.T) {
-	client, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-User-Fullname") != "Override Name" {
-			t.Errorf("expected overridden fullname, got %s", r.Header.Get("X-User-Fullname"))
-		}
-		if r.Header.Get("X-Session-ID") != "sess-123" {
-			t.Errorf("expected session ID, got %s", r.Header.Get("X-Session-ID"))
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":"id-1"}`))
-	})
-
-	err := client.doJSON(context.Background(), http.MethodPost, "/test", nil, nil,
-		WithFullname("Override Name"),
-		WithSessionID("sess-123"),
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if resp.Meta.Message != "done" {
+		t.Errorf("expected message=done, got %s", resp.Meta.Message)
 	}
 }
 

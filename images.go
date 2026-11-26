@@ -6,34 +6,28 @@ import (
 	"net/http"
 )
 
-// ImageService handles face image upload and retrieval.
+// ImageService handles a user's reference image (used by face-match).
 type ImageService struct{ c *Client }
 
-// Upload uploads a face image associated with an email.
-func (s *ImageService) Upload(ctx context.Context, email string, image io.Reader, fileName string, opts ...CallOption) (*ImageUploadResponse, error) {
-	fields := map[string]string{"email": email}
-	files := []FileUpload{{
-		FieldName: "image",
-		FileName:  fileName,
-		Content:   image,
-	}}
-	var resp ImageUploadResponse
-	if err := s.c.doMultipart(ctx, pathGateway+"/images", fields, files, &resp, opts...); err != nil {
-		return nil, err
+// Upload stores the reference image for the given user. Requires an approved
+// consent for the user.
+func (s *ImageService) Upload(ctx context.Context, userID string, image io.Reader, fileName string, opts ...CallOption) error {
+	files := []FileUpload{{FieldName: "image", FileName: fileName, Content: image}}
+	req, err := s.c.buildMultipartRequestMethod(ctx, http.MethodPut, pathGatewayV2+"/users/"+userID+"/reference-image", nil, files)
+	if err != nil {
+		return err
 	}
-	return &resp, nil
+	applyCallOptions(req, opts)
+	return s.c.do(req, nil)
 }
 
-// Get retrieves the image URL for a given email.
-func (s *ImageService) Get(ctx context.Context, email string, opts ...CallOption) (*ImageGetResponse, error) {
-	var resp ImageGetResponse
-	req, err := s.c.newRequest(ctx, http.MethodGet, pathGateway+"/images/"+email, nil)
+// Get downloads the stored reference image bytes for the given user.
+func (s *ImageService) Get(ctx context.Context, userID string, opts ...CallOption) ([]byte, error) {
+	req, err := s.c.newRequest(ctx, http.MethodGet, pathGatewayV2+"/users/"+userID+"/reference-image", nil)
 	if err != nil {
 		return nil, err
 	}
 	applyCallOptions(req, opts)
-	if err := s.c.do(req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+	data, _, err := s.c.doBytes(req)
+	return data, err
 }

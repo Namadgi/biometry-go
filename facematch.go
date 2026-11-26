@@ -3,31 +3,40 @@ package biometry
 import (
 	"context"
 	"io"
-	"net/http"
 )
 
-// FaceMatchService handles face matching between images and videos.
+// FaceMatchService handles face matching against a client-provided reference
+// image.
 type FaceMatchService struct{ c *Client }
 
-// Match compares faces from an uploaded image and video.
-func (f *FaceMatchService) Match(ctx context.Context, image io.Reader, imageName string, video io.Reader, videoName string, opts ...CallOption) (*Response, error) {
-	files := []FileUpload{
-		{FieldName: "image", FileName: imageName, Content: image},
-		{FieldName: "video", FileName: videoName, Content: video},
-	}
-	return f.c.doMultipartRaw(ctx, pathGateway+"/match-faces", nil, files, opts...)
+// FaceMatchInput is the input for a face-match request.
+type FaceMatchInput struct {
+	UserID         string // opaque, customer-provided identity key
+	ReferenceImage io.Reader
+	ReferenceName  string
+	// Video is the live capture to match against the reference. May be nil when
+	// UseSessionVideo is true.
+	Video     io.Reader
+	VideoName string
+	SessionID string // optional; required when UseSessionVideo is true
+	// UseSessionVideo reuses the video captured earlier in the session instead
+	// of uploading Video. Requires SessionID.
+	UseSessionVideo bool
 }
 
-// MatchWithSessionVideo compares a face image against the video from a
-// previous process-video call in the given session. This avoids re-uploading
-// the video.
-func (f *FaceMatchService) MatchWithSessionVideo(ctx context.Context, image io.Reader, imageName string, sessionID string, opts ...CallOption) (*Response, error) {
-	files := []FileUpload{
-		{FieldName: "image", FileName: imageName, Content: image},
-	}
-	opts = append(opts, func(r *http.Request) {
-		r.Header.Set("X-Use-Prefilled-Video", "true")
-		r.Header.Set("X-Session-ID", sessionID)
+// Match compares the live capture against the provided reference image.
+func (f *FaceMatchService) Match(ctx context.Context, input FaceMatchInput, opts ...CallOption) (*Response, error) {
+	fields, err := requestField(v2Request{
+		UserID:          input.UserID,
+		SessionID:       input.SessionID,
+		UseSessionVideo: input.UseSessionVideo,
 	})
-	return f.c.doMultipartRaw(ctx, pathGateway+"/match-faces", nil, files, opts...)
+	if err != nil {
+		return nil, err
+	}
+	files := []FileUpload{{FieldName: "reference_image", FileName: input.ReferenceName, Content: input.ReferenceImage}}
+	if input.Video != nil {
+		files = append(files, FileUpload{FieldName: "video", FileName: input.VideoName, Content: input.Video})
+	}
+	return f.c.doMultipartRaw(ctx, pathGatewayV2+"/face-match", fields, files, opts...)
 }

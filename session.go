@@ -10,19 +10,21 @@ type SessionService struct{ c *Client }
 
 // Start begins a new biometric session and returns the session ID.
 func (s *SessionService) Start(ctx context.Context, opts ...CallOption) (string, error) {
-	var id string
-	req, err := s.c.newRequest(ctx, http.MethodPost, pathGateway+"/sessions/start", nil)
+	req, err := s.c.newRequest(ctx, http.MethodPost, pathGatewayV2+"/sessions", nil)
 	if err != nil {
 		return "", err
 	}
 	applyCallOptions(req, opts)
-	if err := s.c.do(req, &id); err != nil {
+	var out struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := s.c.do(req, &out); err != nil {
 		return "", err
 	}
-	return id, nil
+	return out.SessionID, nil
 }
 
-// End terminates a session by ID.
+// End terminates a session by ID. Pass a non-nil req to run a SIM-swap check.
 func (s *SessionService) End(ctx context.Context, id string, req *EndSessionRequest, opts ...CallOption) error {
-	return s.c.doJSON(ctx, http.MethodPost, pathGateway+"/sessions/end/"+id, req, nil, opts...)
+	return s.c.doJSON(ctx, http.MethodPost, pathGatewayV2+"/sessions/"+id+"/end", req, nil, opts...)
 }

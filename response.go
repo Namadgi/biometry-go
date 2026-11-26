@@ -5,18 +5,33 @@ import (
 	"net/http"
 )
 
-// Response is the full API response envelope. Used for endpoints like
-// process-video and match-faces that return scoring data alongside the result.
+// Response is the full API v2 success envelope. Used for verification endpoints
+// (liveness, face-verify, voice-verify, face-match, documents/check) that may
+// carry a scoring decision alongside the raw service data.
 type Response struct {
-	Data            json.RawMessage `json:"data,omitempty"`
-	ScoringResult   json.RawMessage `json:"scoring_result,omitempty"`
-	Score           float64         `json:"score,omitempty"`
-	DecisionReasons []string        `json:"decision_reasons,omitempty"`
-	Message         string          `json:"message,omitempty"`
+	// Data is the endpoint-specific payload. Decode it with Decode.
+	Data json.RawMessage `json:"data,omitempty"`
+	// Decision is the scoring decision, present only when a scoring system
+	// applies to the API key.
+	Decision *Decision `json:"decision,omitempty"`
+	// Meta carries the request ID and a human-readable message.
+	Meta Meta `json:"meta"`
 
-	// Header contains the raw HTTP response headers for accessing
-	// X-Request-ID, X-Auto-Enroll, X-Removed-Services, etc.
+	// Header contains the raw HTTP response headers.
 	Header http.Header `json:"-"`
+}
+
+// Decision is the scoring decision computed for the request.
+type Decision struct {
+	Status  string   `json:"status,omitempty"`
+	Score   *float64 `json:"score,omitempty"`
+	Reasons []string `json:"reasons,omitempty"`
+}
+
+// Meta is the response metadata attached to every API v2 response.
+type Meta struct {
+	RequestID string `json:"request_id,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 // Decode unmarshals the Data field into the provided target.
@@ -24,19 +39,11 @@ func (r *Response) Decode(v any) error {
 	return json.Unmarshal(r.Data, v)
 }
 
-// RequestID returns the X-Request-ID response header value.
+// RequestID returns the request identifier, preferring the envelope meta and
+// falling back to the X-Request-Id response header.
 func (r *Response) RequestID() string {
+	if r.Meta.RequestID != "" {
+		return r.Meta.RequestID
+	}
 	return r.Header.Get("X-Request-Id")
-}
-
-// AutoEnrolled returns true if the X-Auto-Enroll response header is "true",
-// indicating that automatic face/voice enrollment was performed.
-func (r *Response) AutoEnrolled() bool {
-	return r.Header.Get("X-Auto-Enroll") == "true"
-}
-
-// RemovedServices returns true if the X-Removed-Services response header is
-// "true", indicating some services were dropped due to missing consent.
-func (r *Response) RemovedServices() bool {
-	return r.Header.Get("X-Removed-Services") == "true"
 }

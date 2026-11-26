@@ -15,33 +15,18 @@ func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) { c.httpClient = hc }
 }
 
-// WithUserFullname sets the default X-User-Fullname header for all requests.
-func WithUserFullname(name string) Option {
-	return func(c *Client) { c.userFullname = name }
-}
-
 // WithUserAgent overrides the default User-Agent header.
 func WithUserAgent(ua string) Option {
 	return func(c *Client) { c.userAgent = ua }
 }
 
 // CallOption modifies an individual HTTP request.
+//
+// Note: identity, session, trigger, document-provider, and prefilled-video
+// selection are NOT headers in API v2 — they are fields of the per-call input
+// structs (they are carried in the JSON `request` part). The call options below
+// only cover request metadata headers that the gateway still reads directly.
 type CallOption func(*http.Request)
-
-// WithFullname overrides X-User-Fullname for a single request.
-func WithFullname(name string) CallOption {
-	return func(r *http.Request) { r.Header.Set("X-User-Fullname", name) }
-}
-
-// WithSessionID sets X-Session-ID for a single request.
-func WithSessionID(id string) CallOption {
-	return func(r *http.Request) { r.Header.Set("X-Session-ID", id) }
-}
-
-// WithActionTrigger sets X-Action-Trigger for a single request.
-func WithActionTrigger(trigger string) CallOption {
-	return func(r *http.Request) { r.Header.Set("X-Action-Trigger", trigger) }
-}
 
 // WithDeviceInfo sets X-Device-Info for a single request. The value should be
 // a JSON-encoded string containing device metadata (identifier, model, OS, etc.).
@@ -71,28 +56,6 @@ func WithClientApp(app string) CallOption {
 // WithClientVersion sets X-Client-Version for a single request.
 func WithClientVersion(version string) CallOption {
 	return func(r *http.Request) { r.Header.Set("X-Client-Version", version) }
-}
-
-// WithInhouseDocAuth controls whether to use in-house document authentication.
-// Defaults to true on the server. Set to false to use IDScan.
-func WithInhouseDocAuth(enabled bool) CallOption {
-	return func(r *http.Request) {
-		if enabled {
-			r.Header.Set("X-Inhouse-Docauth", "true")
-		} else {
-			r.Header.Set("X-Inhouse-Docauth", "false")
-		}
-	}
-}
-
-// WithMRZValidation enables MRZ (Machine Readable Zone) validation in
-// document authentication.
-func WithMRZValidation(enabled bool) CallOption {
-	return func(r *http.Request) {
-		if enabled {
-			r.Header.Set("X-Inhouse-MRZ", "true")
-		}
-	}
 }
 
 func applyCallOptions(req *http.Request, opts []CallOption) {

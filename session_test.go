@@ -13,11 +13,14 @@ func TestSessionStart(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if !strings.HasSuffix(r.URL.Path, "/sessions/start") {
+		if !strings.HasSuffix(r.URL.Path, "/api-gateway/v2/sessions") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"data": "session-abc"})
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]string{"session_id": "session-abc"},
+			"meta": map[string]string{},
+		})
 	})
 
 	id, err := client.Sessions.Start(context.Background())
@@ -34,11 +37,11 @@ func TestSessionEnd(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if !strings.HasSuffix(r.URL.Path, "/sessions/end/sess-123") {
+		if !strings.HasSuffix(r.URL.Path, "/api-gateway/v2/sessions/sess-123/end") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"message":"ok"}`))
+		w.Write([]byte(`{"meta":{"message":"ok"}}`))
 	})
 
 	err := client.Sessions.End(context.Background(), "sess-123", &EndSessionRequest{

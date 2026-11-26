@@ -10,10 +10,7 @@ import (
 )
 
 func Example() {
-	client := biometry.NewClient(
-		os.Getenv("BIOMETRY_API_KEY"),
-		biometry.WithUserFullname("John Doe"),
-	)
+	client := biometry.NewClient(os.Getenv("BIOMETRY_API_KEY"))
 
 	ctx := context.Background()
 
@@ -25,18 +22,22 @@ func Example() {
 	}
 	fmt.Println("Session started:", sessionID)
 
-	// Process a video
+	// Run a liveness check
 	video := strings.NewReader("video-bytes") // use a real file in practice
-	resp, err := client.Video.Process(ctx, biometry.ProcessVideoInput{
+	resp, err := client.Verification.Liveness(ctx, biometry.LivenessInput{
+		UserID:    "user-123",
 		Video:     video,
-		VideoName: "sample.mp4",
+		FileName:  "sample.mp4",
 		Phrase:    "one two three four five",
-	}, biometry.WithSessionID(sessionID))
+		SessionID: sessionID,
+	})
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
-	fmt.Printf("Score: %.2f\n", resp.Score)
+	if resp.Decision != nil {
+		fmt.Println("Decision:", resp.Decision.Status)
+	}
 
 	// End the session
 	_ = client.Sessions.End(ctx, sessionID, nil)
@@ -47,7 +48,11 @@ func Example_docauth() {
 	ctx := context.Background()
 
 	doc := strings.NewReader("document-bytes") // use a real file
-	resp, err := client.DocAuth.Check(ctx, doc, "passport.jpg")
+	resp, err := client.DocAuth.Check(ctx, biometry.DocAuthInput{
+		Document: doc,
+		FileName: "passport.jpg",
+		Provider: "inhouse",
+	})
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -58,7 +63,7 @@ func Example_docauth() {
 		fmt.Println("Decode error:", err)
 		return
 	}
-	fmt.Printf("Document: %s, Country: %s\n", info.DocumentType, info.CountryCode)
+	fmt.Printf("Document: %s, Country: %s\n", info.DocumentCategory, info.CountryCode)
 }
 
 func Example_transactions() {
