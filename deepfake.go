@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // DeepfakeService handles asynchronous deepfake / anti-video-forgery checks.
@@ -33,7 +34,7 @@ func (d *DeepfakeService) Submit(ctx context.Context, input DeepfakeInput, opts 
 
 // Status retrieves the current state and results of a deepfake check.
 func (d *DeepfakeService) Status(ctx context.Context, requestID string, opts ...CallOption) (*DeepfakeCheck, error) {
-	req, err := d.c.newRequest(ctx, http.MethodGet, pathGatewayV2+"/deepfake/checks/"+requestID, nil)
+	req, err := d.c.newRequest(ctx, http.MethodGet, pathGatewayV2+"/deepfake/checks/"+url.PathEscape(requestID), nil)
 	if err != nil {
 		return nil, err
 	}

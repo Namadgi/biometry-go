@@ -3,6 +3,7 @@ package biometry
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // APIKeyService manages API keys via the public endpoints.
@@ -24,7 +25,7 @@ func (a *APIKeyService) Mint(ctx context.Context, opts ...CallOption) (*APIKeyIn
 
 // Revoke deletes an API key by ID.
 func (a *APIKeyService) Revoke(ctx context.Context, keyID string, opts ...CallOption) error {
-	req, err := a.c.newRequest(ctx, http.MethodDelete, pathProjects+"/public/apikeys/"+keyID, nil)
+	req, err := a.c.newRequest(ctx, http.MethodDelete, pathProjects+"/public/apikeys/"+url.PathEscape(keyID), nil)
 	if err != nil {
 		return err
 	}

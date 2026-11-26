@@ -3,6 +3,7 @@ package biometry
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // SessionService handles biometric session lifecycle.
@@ -26,5 +27,5 @@ func (s *SessionService) Start(ctx context.Context, opts ...CallOption) (string,
 
 // End terminates a session by ID. Pass a non-nil req to run a SIM-swap check.
 func (s *SessionService) End(ctx context.Context, id string, req *EndSessionRequest, opts ...CallOption) error {
-	return s.c.doJSON(ctx, http.MethodPost, pathGatewayV2+"/sessions/"+id+"/end", req, nil, opts...)
+	return s.c.doJSON(ctx, http.MethodPost, pathGatewayV2+"/sessions/"+url.PathEscape(id)+"/end", req, nil, opts...)
 }

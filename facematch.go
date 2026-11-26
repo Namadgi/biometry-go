@@ -35,7 +35,9 @@ func (f *FaceMatchService) Match(ctx context.Context, input FaceMatchInput, opts
 		return nil, err
 	}
 	files := []FileUpload{{FieldName: "reference_image", FileName: input.ReferenceName, Content: input.ReferenceImage}}
-	if input.Video != nil {
+	// With UseSessionVideo the gateway reuses the session's liveness video
+	// and ignores an uploaded one, so don't upload it.
+	if input.Video != nil && !input.UseSessionVideo {
 		files = append(files, FileUpload{FieldName: "video", FileName: input.VideoName, Content: input.Video})
 	}
 	return f.c.doMultipartRaw(ctx, pathGatewayV2+"/face-match", fields, files, opts...)
