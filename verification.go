@@ -83,7 +83,9 @@ func (v *VerificationService) verify(ctx context.Context, path, fileField string
 		return nil, err
 	}
 	var files []FileUpload
-	if input.Media != nil {
+	// With UseSessionVideo the gateway reuses the session's liveness video
+	// and ignores an uploaded one, so don't upload it.
+	if input.Media != nil && !input.UseSessionVideo {
 		files = []FileUpload{{FieldName: fileField, FileName: input.FileName, Content: input.Media}}
 	}
 	return v.c.doMultipartRaw(ctx, pathGatewayV2+path, fields, files, opts...)

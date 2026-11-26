@@ -69,7 +69,7 @@ func userConsentsPath(userID string) string {
 // templates. It does not give the authorization and storage consent that
 // enrollment requires; use Give for that.
 func (s *ConsentService) Approve(ctx context.Context, consentID, userID string, opts ...CallOption) error {
-	req, err := s.c.newRequest(ctx, http.MethodPost, pathGatewayV2+"/consents/"+consentID+"/approve/"+userID, nil)
+	req, err := s.c.newRequest(ctx, http.MethodPost, pathGatewayV2+"/consents/"+url.PathEscape(consentID)+"/approve/"+url.PathEscape(userID), nil)
 	if err != nil {
 		return err
 	}
@@ -80,7 +80,7 @@ func (s *ConsentService) Approve(ctx context.Context, consentID, userID string, 
 // MyApprovals returns the user's custom consent template approvals.
 func (s *ConsentService) MyApprovals(ctx context.Context, userID string, opts ...CallOption) ([]ConsentApproval, error) {
 	var approvals []ConsentApproval
-	req, err := s.c.newRequest(ctx, http.MethodGet, pathGatewayV2+"/consents/my-approvals/"+userID, nil)
+	req, err := s.c.newRequest(ctx, http.MethodGet, pathGatewayV2+"/consents/my-approvals/"+url.PathEscape(userID), nil)
 	if err != nil {
 		return nil, err
 	}
